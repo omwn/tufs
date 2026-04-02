@@ -1,664 +1,485 @@
-###  -*- coding: utf-8 -*-
-###
-### Export data from TUFS
-###
+"""Extract TUFS vocabulary data from SQL dumps into a combined TSV file.
 
-### Luis wants list of 12 tsv for wn linking
-### DICNAME pos sense lang|lemma,lang|lemma (8 empty)
-###
+Intermediate TSV columns (tab-separated, 9 fields):
+  1. cid       – TUFS concept ID (may be None for non-mapped words)
+  2. lang      – ISO 639-1 language code
+  3. wid       – word ID within the language SQL dump
+  4. lemma     – semicolon-separated lemma forms (with optional morph tags)
+  5. comment   – usage explanation / Japanese gloss
+  6. iids      – semicolon-separated instance IDs linked via t_usage_inst_rel
+  7. examples  – ;;;-separated example records, each pipe-separated:
+                   sentence | reading_or_trans | function_label | token_form
+  8. is_basic  – "1" if this usage is in the basic vocabulary (t_usage.selected=1)
+  9. scenes    – comma-separated scene/domain labels from t_scene
+"""
 
-
-from collections import defaultdict as dd
-import nltk
-from nltk.corpus import wordnet as wn
-from iso639 import languages
 import re
 import sys
+from collections import defaultdict
+from pathlib import Path
+from typing import Optional
 
-datadir = 'tufsdata'  # where the tufs data is downloaded to 
-log = open('munge.log', 'w')
+DATADIR = Path("tufsdata")
+
+# Full mapping for all 23 TUFS languages: ISO 639-1 → (ISO 639-3, English name)
+_L2L3: dict[str, tuple[str, str]] = {
+    "ar": ("arb", "Arabic"),
+    "as": ("apc", "Arabic, Syrian"),
+    "de": ("deu", "German"),
+    "en": ("eng", "English"),
+    "es": ("spa", "Spanish"),
+    "fr": ("fra", "French"),
+    "id": ("ind", "Indonesian"),
+    "ja": ("jpn", "Japanese"),
+    "km": ("khm", "Khmer"),
+    "ko": ("kor", "Korean"),
+    "lo": ("lao", "Lao"),
+    "mn": ("mon", "Mongolian"),
+    "ms": ("zsm", "Malay"),
+    "my": ("mya", "Burmese"),
+    "pb": ("por", "Portuguese, Brazilian"),
+    "pt": ("por", "Portuguese"),
+    "ru": ("rus", "Russian"),
+    "th": ("tha", "Thai"),
+    "tl": ("fil", "Filipino"),
+    "tr": ("tur", "Turkish"),
+    "ur": ("urd", "Urdu"),
+    "vi": ("vie", "Vietnamese"),
+    "zh": ("cmn", "Chinese, Mandarin"),
+}
 
 
 
-def read_bunrui_names(filename):
+def l2l3(alpha2: str) -> tuple[str, str]:
+    """Convert a two-letter language code to (iso639-3, english_name).
+
+    Args:
+        alpha2: ISO 639-1 two-letter code (or TUFS project-specific code).
+
+    Returns:
+        Tuple of (three-letter code, English language name).
+
+    Examples:
+        >>> l2l3('en')
+        ('eng', 'English')
+        >>> l2l3('ar')
+        ('arb', 'Arabic')
     """
-    read the names of the bunrui concepts 
-    we have them in four languages: en, ms, my, ja
+    if alpha2 in _L2L3:
+        return _L2L3[alpha2]
+    return ("unk", alpha2)
 
-    bunrui_name['4.50']['en'] = 'Animal calls'
-    
-    >>> bn = read_bunrui_names('tufsdata/bunrui_names.tsv')
-    >>> dict(bn['4.50'])
-    {'en': 'Animal calls', 'ms': 'Bunyi haiwan', 'my': 'တိရစ္တာန်များ၏အော်မြည်သံ', 'ja': '動物の鳴き声'}
+
+def scrub(cell: str) -> Optional[str]:
+    """Replace SQL null sentinel with None."""
+    return None if cell == r"\N" else cell
+
+
+def read_tables(datadir: Path, lang: str) -> dict[str, list]:
+    """Parse a PostgreSQL dump file into a dict of table → rows.
+
+    The first element of each list is the column-name row; subsequent
+    elements are data rows (each a list of strings or None).
+
+    Args:
+        datadir: Directory containing ``vmod_{lang}.sql`` files.
+        lang: Two-letter language code.
+
+    Returns:
+        Mapping of table name to list of rows (header first).
     """
-    bunrui_name = dd(lambda: dd(str))
-    fh = open(filename)
-    for l in fh:
-        #print(l)
-        (code, en, ms, my, ja) = l.strip().split("\t")
-        if code == 'Code':
-            continue
-        bunrui_name[code]['en'] = en
-        bunrui_name[code]['ms'] = ms
-        bunrui_name[code]['my'] = my
-        bunrui_name[code]['ja'] = ja
-    return bunrui_name
-
-def scrub(cell):
-    """
-    return a cleaned cell
-    """
-    cell = None if cell == '\\N' else cell
-    return cell
-
-def read_tables(datadir, lang):
-    """Put all the data for  language in a table
-    the key is the table name, 
-    the first row contains the column names
-    the following rows have the values
-   
-    If the data is '\\N', replace with None.
-    Otherwise each element is a string.
-
-    >>> data = read_tables('tufsdata', 'en') 
-    >>> data['t_bunrui'][:3]
-    [['bunrui_no', 'chukoumoku'], ['1.10', '事柄'], ['1.11', '類']]
-    >>> data['t_word'][:2]
-    [['id', 'basic', 'selected', 'index_char', 'sort_order'], 
-     ['1208', 'word', '1', 'W', None]]
-
-    """
-    data = dd(list)
-    fh = datadir + "/vmod_{}.sql".format(lang)
-    state = None
-    for l in open(fh):
-        if 'COPY' in  l:
-            row = l[5:-14].split(' (')
-            #print(row)
-            state = row[0]
-            data[state].append(row[1].split(', '))
-        elif l.startswith(r'\.'):
-            state = None
-        elif state:
-            data[state].append([scrub(c) for c in l.strip().split('\t')])
-            
+    data: dict[str, list] = defaultdict(list)
+    state: Optional[str] = None
+    with open(datadir / f"vmod_{lang}.sql") as fh:
+        for line in fh:
+            if "COPY" in line:
+                table, cols = line[5:-14].split(" (", 1)
+                state = table
+                data[state].append(cols.split(", "))
+            elif line.startswith(r"\."):
+                state = None
+            elif state:
+                data[state].append([scrub(c) for c in line.rstrip("\n").split("\t")])
     return data
 
-def fetch_data(datadir,langs):
+
+def get_words(data: dict[str, list]) -> dict[str, dict[str, str]]:
+    """Extract word forms keyed by word ID.
+
+    Includes all words that are not explicitly deselected (selected != '0'),
+    so that words with selected=None (present in some languages) are retained.
+
+    Args:
+        data: Output of :func:`read_tables`.
+
+    Returns:
+        Mapping ``{lang: {word_id: form}}``.
     """
-    Get the data for all the languages
-    data = fetch_data('tufsdata', ['en', 'ja'])
-
-    >>> data = fetch_data('tufsdata', ['en', 'ja'])
-    >>> data['ja']['t_word'][:2]
-    [['id', 'basic', 'selected', 'index_char', 'sort_order'], 
-     ['1781', '東', '1', 'ひ', None]]
-    >>> data['en']['t_word'][:2]
-    [['id', 'basic', 'selected', 'index_char', 'sort_order'], 
-     ['1208', 'word', '1', 'W', None]]
-
-    """
-    alldata = dict()
-    for l in langs:
-        alldata[l] = read_tables('tufsdata', l) 
-    return alldata
-
-def get_words(data):
-    """
-    get information about words, senses and more from the tables.
-
-    word[lang][wid] = form  
-    wid is language specific
-    wid can be used to access the pronunciation
-    url = 'http://www.coelang.tufs.ac.jp/mt/{}/vmod/sound/word/word_{}.mp3'.format(lang,wid)
-
-    >>> data = fetch_data('tufsdata', ['en', 'ja'])
-    >>> word = get_words(data)
-    >>> word['en']['946']  
-    'post office'
-    >>> word['ja']['946']
-    '写真'
-
-    """
-    word = dd(lambda: dd(str))
-    for lang in data.keys():
-       ### link words to their ids
-       for  (id, basic, selected, index_char, sort_order) in data[lang]['t_word'][1:]:
-           # only keep selected words
-           if selected !=  "0":
-               word[lang][id] = basic.strip()
+    word: dict[str, dict[str, str]] = defaultdict(dict)
+    for lang, tables in data.items():
+        for row in tables["t_word"][1:]:
+            wid, basic, selected, *_ = row
+            if selected != "0" and basic:
+                word[lang][wid] = basic.strip()
     return word
 
-def get_usage(data):
+
+def get_usage(data: dict[str, list]) -> dict[str, dict[str, tuple]]:
+    """Extract all usages (sense-level entries) with a basic-vocabulary flag.
+
+    All usages are returned, not just the basic set, so that non-basic senses
+    (t_usage.selected != '1') are available for inclusion in the wordnet.  The
+    ``is_basic`` flag distinguishes them.
+
+    Args:
+        data: Output of :func:`read_tables`.
+
+    Returns:
+        Mapping ``{lang: {usage_id: (word_id, explanation, is_basic)}}``.
     """
-    usage is like a gloss of the meaning
-
-    usage[lang][uid] = (wid, usage)
-
-    >>> data = fetch_data('tufsdata', ['en', 'ja'])
-    >>> usage = get_usage(data)
-    >>> usage['en']['215']          # usage ID
-    ('946', '郵便局')              
-    >>> usage['ja']['297']
-    ('946', '【よみ】; しゃしん;【意味】; photograph')
-
-    Note: escaped backslashes '\\' to '\\\\'
-
-    """
-    usage = dict()
-    for lang in data.keys():
-        usage[lang] = dict()
-        for  (usage_id, word_id, explanation,
-              disp_priority, selected) in data[lang]['t_usage'][1:]:
-            if selected !=  0:
-                ## check for duplicates (this never happened)
-                if usage_id in usage[lang]:
-                    print('WARNING usage_id used twice', usage_id, explanation, usage[lang][usage_id][1],
-                          file=sys.stderr)
-                explanation = re.sub(r'(\\n)+', ';', str(explanation)).strip(';').strip()
-                usage[lang][usage_id] = (word_id, explanation)
+    usage: dict[str, dict[str, tuple]] = {}
+    for lang, tables in data.items():
+        usage[lang] = {}
+        for row in tables["t_usage"][1:]:
+            usage_id, word_id, explanation, _priority, selected = row
+            is_basic = selected == "1"
+            explanation = re.sub(r"(\\n)+", ";", str(explanation or "")).strip(";").strip()
+            if usage_id in usage[lang]:
+                print(
+                    f"WARNING: duplicate usage_id {usage_id} for {lang}",
+                    file=sys.stderr,
+                )
+            usage[lang][usage_id] = (word_id, explanation, is_basic)
     return usage
 
 
-def get_concepts(data):
+def get_concepts(data: dict[str, list]) -> tuple:
+    """Map usage IDs to TUFS concept IDs and extract bunrui metadata.
+
+    Args:
+        data: Output of :func:`read_tables`.
+
+    Returns:
+        Tuple of (u2t, bunrui_n, bunrui_c, bunrui_u) where:
+        - u2t: ``{lang: {usage_id: classified_id}}``
+        - bunrui_n: ``{classified_id: midasi (heading)}``
+        - bunrui_c: ``{classified_id: bunrui_code}``
+        - bunrui_u: ``{classified_id: {lang: [usage_id, ...]}}``
     """
-    this links concepts to usage and more
+    u2t: dict[str, dict[str, str]] = defaultdict(dict)
+    bunrui_n: dict[str, str] = {}
+    bunrui_c: dict[str, str] = {}
+    bunrui_u: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
 
-    ## map the language internal usage id to the shared ID
-    u2t[uid] = tid 
-
-    >>> data = fetch_data('tufsdata', ['en', 'ja'])
-    >>> u2t, bunrui_n, bunrui_c, bunrui_u = get_concepts(data)
-    >>> u2t['ja']['297']
-    '35159'
-    >>> u2t['en']['297']
-    '11443'
-
-    ## bunrui word for this concept
-
-    >>> bunrui_n['35159']
-    '写真'
-    >>> bunrui_n['23439']
-    '郵便局'
-
-    ## bunrui code for this concept
-
-    >>> bunrui_c['35159']
-    '1.3220'
-    >>> bunrui_c['23439']
-    '1.2720'
-
-    ## bunrui usages for this concept
-
-    >>> bunrui_u['35159']['en']
-    ['454']
-    >>> bunrui_u['23439']['ja']
-    ['660']
-
-    """
-    u2t = dd(dict)
-
-    ###
-    ### The key is the classified_id
-    ###
-    bunrui = dict()
-    bunrui_n = dict()  #
-    bunrui_c = dict()  #t[50788] = '1.431' 
-    bunrui_u = dd(lambda: dd(list))  # usage_id
-    # from which we can get (word, wordid, explanation)
-    #bunrui_we = dd(lambda: dd(list)) # explanation
-    #bunrui_e = dd(lambda: dd(list))  # examples
-    #super_w = dd(lambda: dd(list)) # super_w['1.40'][lang] = [w1, w2]
-
-    for lang in data.keys():
-        for (usage_id, classified_id, bunrui_no, chukoumoku_no, rui,
-             bumon, chukoumoku, bunruikoumoku, midasi, hontai,
-             yomirow) in data[lang]['t_usage_classified_rel'][1:]:
-            # usage_id is the language internal thing
-            # classified_id is the shared id (we call it the TUFS ID)
-            #
-            # links the usage_id to the supertype (and gives information about that)
-            # bunrui[23439] = '郵便局'  name of category
-            # bunrui_t[23439] = 1.272  number of category (rounded poorly in the db)
-            # bunrui_w[23439] = [('post office', 946, '郵便局'), ..
-            # super_w[23439] = []  list of words used by this supertype
-            u2t[lang][usage_id] = classified_id  ## map the language internal usage id to the tufs ID
-            bunrui_n[classified_id] = midasi  ## name of category, not language dependant
-            bunrui_c[classified_id] = str(round(float(bunrui_no), 4)).ljust(6,'0')
+    for lang, tables in data.items():
+        for row in tables["t_usage_classified_rel"][1:]:
+            (usage_id, classified_id, bunrui_no, *_, midasi, _hontai, _yomi) = row
+            u2t[lang][usage_id] = classified_id
+            bunrui_n[classified_id] = midasi
+            bunrui_c[classified_id] = str(round(float(bunrui_no), 4)).ljust(6, "0")
             bunrui_u[classified_id][lang].append(usage_id)
-            #bunrui_w[classified_id][lang].append((word[lang][usage[usage_id][0]],
-            #                                      usage[usage_id][0],
-            #                                      usage[usage_id][1]))
-            #super_w[bunrui_t[classified_id][:4]][lang].append(word[lang][usage[usage_id][0]]) 
+
     return u2t, bunrui_n, bunrui_c, bunrui_u
 
 
-def get_instances(data):
+def get_instances(data: dict[str, list]) -> tuple:
+    """Extract example sentences linked to usages.
+
+    Captures the full instance record including reading/translation (``trans``),
+    pragmatic function label, and audio pronunciation where available.
+
+    Args:
+        data: Output of :func:`read_tables`.
+
+    Returns:
+        Tuple of (inst, usage_inst) where:
+        - inst: ``{lang: {instance_id: (sentence, reading_or_trans, function, pronun)}}``
+        - usage_inst: ``{lang: {usage_id: [instance_id, ...]}}``
     """
-    this gets the example sentences
-    many also have translations into Japanese
-    # instances (for examples)
-    # inst[lang][iid] = (form, trans)
+    inst: dict[str, dict[str, tuple]] = defaultdict(dict)
+    usage_inst: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
 
-    >>> data = fetch_data('tufsdata', ['en', 'ja'])
-    >>> inst, usage_inst = get_instances(data)
-    >>> usage_inst['en']['215']
-    ['859']
+    for lang, tables in data.items():
+        ic = tables["t_instance"][0]
+        for row in tables["t_instance"][1:]:
+            iid = row[ic.index("id")]
+            target = row[ic.index("targetlanguage")]
+            trans = row[ic.index("trans")]
+            function = row[ic.index("function")]
+            pronun = row[ic.index("pronun")]
+            selected = row[ic.index("selected")]
 
-    # iid (instance ID) also links to pronounciation
-    # url = 'http://www.coelang.tufs.ac.jp/mt/{}/vmod/sound/inst/inst_{}.mp3'.format(lang,iid)
-    #  usage_inst[usage_id] = inst_id
+            if selected == "1" and target and target.strip("\\n"):
+                inst[lang][iid] = (
+                    target.strip("\\n"),
+                    (trans or "").strip("\\n"),
+                    (function or "").strip() if function and function != "null" else "",
+                    (pronun or "").strip(),
+                )
 
-    >>> inst['en']['859']
-    ('I went to the post office to buy some stamps.',
-                           '私は郵便局に切手を買いに行った。')
-
-    """
-    inst = dd(lambda: dd(tuple))
-    usage_inst = dd(lambda: dd(list))
-    for lang in data.keys():
-        ## get the examples for each instance
-        for (iid, targetlanguage, trans, function, pronun, explanation,
-             module_id, xml_file_name, xpath, web_url, usage_id_rel,
-             selected) in data[lang]['t_instance'][1:]:
-            if selected == '1': #selected
-                if targetlanguage.strip('\\n'): #only save if there is an example
-                    inst[lang][iid] =  (targetlanguage.strip('\\n'),
-                                        str(trans).strip('\\n'))
-        ## get the examples for each usage
-        for (uiid, usage_id, inst_id, disp_priority,
-             token, token_index, ptoken, ptoken_indexrow) in data[lang]['t_usage_inst_rel']:
-            #print(lang, uiid, usage_id, inst_id, token, token_index, ptoken, ptoken_indexrow, sep='\t')
-            if inst_id in inst[lang]: # only add if there is an example
+        urc = tables["t_usage_inst_rel"][0]
+        for row in tables["t_usage_inst_rel"][1:]:
+            usage_id = row[urc.index("usage_id")]
+            inst_id = row[urc.index("inst_id")]
+            if inst_id in inst[lang]:
                 usage_inst[lang][usage_id].append(inst_id)
-       
+
     return inst, usage_inst
 
-def clean(word, lang):
-    """return a list of (word, thing:value)
 
-       >>> clean('hot', 'en') 
-       [('hot', '')]
-       >>> clean('辣　là', 'zh')
-       [('辣', 'orth:pīnyīn là')]
-       >>> clean('طيّب (ـين)‏', 'as')  # note wierd ltr
-       [('طيّب', 'morph:pl ـين')]
+def get_word_instances(data: dict[str, list]) -> dict[str, dict[str, list]]:
+    """Extract additional examples via t_word_inst_rel (word ↔ instance links).
+
+    This table provides extra examples from the dialogue module that are
+    not linked through t_usage_inst_rel.  Only populated for English in
+    the current TUFS data.
+
+    Args:
+        data: Output of :func:`read_tables`.
+
+    Returns:
+        Mapping ``{lang: {word_id: [(inst_id, token)]}}``.
+        ``token`` is the surface form of the word in the example sentence.
     """
-    
-    ### delete trailing newline and left-to-right mark
-    if word.endswith('\\n'):
-        word = word[:-3]
-    word=word.replace('\u200f','')
-    cleaned = []
+    word_inst: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
+    for lang, tables in data.items():
+        wc = tables["t_word_inst_rel"][0]
+        for row in tables["t_word_inst_rel"][1:]:
+            wid = row[wc.index("word_id")]
+            iid = row[wc.index("inst_id")]
+            token = (row[wc.index("token")] or "").strip()
+            if wid and iid:
+                word_inst[lang][wid].append((iid, token))
+    return word_inst
 
-    ### too hard to process
-    if word in ["(…이/가) 되다",
-                "sala (de aula)",
-                "-arak/-erek (yürü-yerek)",
-                "poderia (fazer) …"]:
-        return [(word, '')]
 
-    ### split and handle stuff in brackets
-    
-    for w in re.split(r'[/,]\s*',word):
-        ### split on '/' or ',', not perfect but ok
-        m = re.match(r'(.+) \((.+?)\)', w)
-        if m: # remember bracketed stuff
-            if lang in ['ar', 'as']: # Arabic gives plural
-                cleaned.append((m.group(1), 'morph:pl '+m.group(2)))
-            elif lang in ['ja']:  # it is a footnotemark
-                cleaned.append((m.group(1), ''))
-            elif lang in ['ms']:  # Malay gives us roots
-                if m.group(1)[0] == 'm':
-                    cleaned.append((m.group(2), 'morph:meN- '+m.group(1)))
-                elif m.group(1)[0] == 'b':
-                    cleaned.append((m.group(2), 'morph:ber- '+m.group(1)))
-        elif lang == 'zh': # split pinyin
-            #print(w)
-            #print('zh', w)
-            zhs = w.split() # single or multi
-            cleaned.append((zhs[0], 'orth:pīnyīn ' + zhs[1]))
-            if len(zhs) > 2:
-                print('ERROR in pinyin', file=log)
+def get_scenes(data: dict[str, list]) -> dict[str, dict[str, list]]:
+    """Extract scene/domain labels for each usage.
+
+    Scenes are thematic categories (e.g. 海外旅行, スポーツ, 学校) assigned
+    to usages via t_scene/t_usage_scene_rel.
+
+    Args:
+        data: Output of :func:`read_tables`.
+
+    Returns:
+        Mapping ``{lang: {usage_id: [scene_name, ...]}}``.
+    """
+    scenes: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
+    for lang, tables in data.items():
+        scene_by_id = {r[0]: r[1] for r in tables["t_scene"][1:]}
+        for row in tables["t_usage_scene_rel"][1:]:
+            usage_id, scene_id = row[0], row[1]
+            name = scene_by_id.get(scene_id)
+            if name:
+                scenes[lang][usage_id].append(name)
+    return scenes
+
+
+def find_token_offset(sentence: str, token: str) -> int:
+    """Find the character offset of ``token`` within ``sentence``.
+
+    Case-insensitive, strips trailing whitespace from token.
+
+    Args:
+        sentence: The full example sentence.
+        token: The surface form of the vocabulary word.
+
+    Returns:
+        Zero-based character offset, or ``-1`` if not found.
+    """
+    return sentence.lower().find(token.lower().strip())
+
+
+def clean(word: str, lang: str) -> list[tuple[str, str]]:
+    """Normalise a raw word form into a list of (lemma, tag) pairs.
+
+    Args:
+        word: Raw word form from the database.
+        lang: Two-letter language code.
+
+    Returns:
+        List of ``(lemma, tag_string)`` pairs.
+
+    Examples:
+        >>> clean('hot', 'en')
+        [('hot', '')]
+        >>> clean('辣\\u3000là', 'zh')
+        [('辣', 'orth:pīnyīn là')]
+        >>> clean('طيّب (ـين)', 'as')
+        [('طيّب', 'morph:pl ـين')]
+    """
+    if word.endswith("\\n"):
+        word = word[:-2]
+    word = word.replace("\u200f", "")
+
+    if word in {
+        "(…이/가) 되다",
+        "sala (de aula)",
+        "-arak/-erek (yürü-yerek)",
+        "poderia (fazer) …",
+    }:
+        return [(word, "")]
+
+    cleaned: list[tuple[str, str]] = []
+    for part in re.split(r"[/,]\s*", word):
+        m = re.match(r"(.+) \((.+?)\)", part)
+        if m:
+            base, bracketed = m.group(1), m.group(2)
+            if lang in ("ar", "as"):
+                cleaned.append((base, f"morph:pl {bracketed}"))
+            elif lang == "ja":
+                cleaned.append((base, ""))
+            elif lang == "ms":
+                if base[0] == "m":
+                    cleaned.append((bracketed, f"morph:meN- {base}"))
+                elif base[0] == "b":
+                    cleaned.append((bracketed, f"morph:ber- {base}"))
+                else:
+                    cleaned.append((base, ""))
+            else:
+                cleaned.append((base, ""))
+        elif lang == "zh":
+            parts = part.split()
+            if len(parts) >= 2:
+                cleaned.append((parts[0], f"orth:pīnyīn {parts[1]}"))
+            else:
+                print(f"WARNING: zh word missing pinyin: {part!r}", file=sys.stderr)
+                cleaned.append((parts[0], ""))
         else:
-            cleaned.append((w, ''))
-        # if cleaned != [(word, '')]:
-        #     print ("CLEANED:", lang, word, cleaned)
+            cleaned.append((part, ""))
+
     return cleaned
-    
 
 
+def fetch_data(datadir: Path, langs: list[str]) -> dict[str, dict]:
+    """Load raw table data for all requested languages.
 
-def print_tsv(filename, data):
+    Args:
+        datadir: Directory containing ``vmod_{lang}.sql`` files.
+        langs: List of two-letter language codes.
+
+    Returns:
+        Mapping ``{lang: tables}`` as returned by :func:`read_tables`.
     """
-    print out the data as tsv
-    # "cid", "lang", "wid", "lemma", "meaning", "example"
+    return {lang: read_tables(datadir, lang) for lang in langs}
+
+
+def _encode_example(sentence: str, reading: str, function: str, token: str) -> str:
+    """Encode a single example as a pipe-separated string.
+
+    Fields: ``sentence | reading_or_trans | function_label | token_form``
+
+    Empty trailing fields are omitted to keep the format compact.
     """
-    word  = get_words(data)
+    parts = [
+        sentence.replace("\u3000", " "),
+        reading.replace("\u3000", " "),
+        function,
+        token,
+    ]
+    # Strip trailing empty fields
+    while parts and not parts[-1]:
+        parts.pop()
+    return "|".join(parts)
+
+
+def print_tsv(filename: str, data: dict[str, dict]) -> None:
+    """Write the combined vocabulary TSV consumed by tufs2wn.py.
+
+    Output columns (tab-separated):
+        cid, lang, wid, lemma, comment, iids, examples, is_basic, scenes, bunrui
+
+    Each example record is pipe-separated:
+        sentence | reading_or_trans | function_label | token_form
+
+    Multiple examples within a row are separated by ;;;.
+
+    Args:
+        filename: Output file path.
+        data: Output of :func:`fetch_data`.
+    """
+    word = get_words(data)
     usage = get_usage(data)
-    u2t, bunrui_n, bunrui_c, bunrui_u   = get_concepts(data)
-    inst, usage_inst = get_instances(data)        
-  
-    with open(filename,'w') as t:
-        ## sense[tid][lang] = [(wid, explanation, iid), (wid, explanation, iid) ]
-        for l in usage:
-            for u in usage[l]:
-                tufs_id = u2t[l][u] if u in u2t[l] else None
-                # if u not in u2t[l]:
-                #     print ('WARNING unknown usage', l, u, usage[l][u][0],
-                #            usage[l][u][1], usage_inst[l][u], file=sys.stderr)
-                w = word[l][usage[l][u][0]]
-                if w == '':
+    u2t, _bn, bc, _bu = get_concepts(data)
+    inst, usage_inst = get_instances(data)
+    word_inst = get_word_instances(data)
+    scenes_map = get_scenes(data)
+
+    # Build inst lookup for extra-example access
+    inst_full: dict[str, dict[str, tuple]] = defaultdict(dict)
+    for lang, tables in data.items():
+        ic = tables["t_instance"][0]
+        for row in tables["t_instance"][1:]:
+            iid = row[ic.index("id")]
+            target = (row[ic.index("targetlanguage")] or "").strip("\\n")
+            trans = (row[ic.index("trans")] or "").strip("\\n")
+            function = row[ic.index("function")] or ""
+            if function == "null":
+                function = ""
+            if target:
+                inst_full[lang][iid] = (target, trans.strip(), function.strip(), "")
+
+    with open(filename, "w") as out:
+        for lang in usage:
+            for uid, (word_id, explanation, is_basic) in usage[lang].items():
+                w = word[lang].get(word_id, "")
+                if not w:
                     continue
-                cleaned = []
-                for (lem,typ) in clean(w,l):
-                    if not typ:
-                        cleaned.append(lem)
-                    else:
-                        cleaned.append(lem + ' (' + typ  + ')')
-                examples = []
-                for iid in usage_inst[l][u]: 
-                    examples.append('|'.join(inst[l][iid]))
-                print(tufs_id,             # tufs id
-                      l,                   # language
-                      usage[l][u][0],      # wid
-                      "; ".join(cleaned),  #lemmas   
-                      usage[l][u][1],      # usage explanation
-                      ";".join(usage_inst[l][u]),    # iids  
-                      ";;;".join(examples) if examples else '',          # examples  
-                      sep='\t', file=t)
 
-def l2l3(l):
-    """convert the language name
-    >>> l2l3('en')
-    ('eng', 'English')
-    >>> l2l3('as')
-    ('apc', 'Arabic, Syrian')
-    >>> l2l3('ar')
-    ('arb', 'Arabic')
-    """
-    try:
-        if l == 'pb':
-            language= 'Por., Brazil'
-            l3 ='por'
-        elif l == 'ms':
-            language= 'Malay'
-            l3='zsm'
-        elif l == 'as':
-            language= 'Arabic, Syrian'
-            l3='apc'
-        elif l == 'ar':
-            language= 'Arabic'
-            l3='arb'
-        elif l == 'zh':
-            language= 'Chinese, Mandarin'
-            l3='cmn' 
-        else:
-            language= languages.get(alpha2=l).name
-            l3 = languages.get(alpha2=l).part3
-    except:
-        language=l
-        l3='unk'
-    return l3, language
+                cleaned_parts = []
+                for lem, typ in clean(w, lang):
+                    cleaned_parts.append(f"{lem} ({typ})" if typ else lem)
 
-                
-# def print_html(filename, data):
-#     """
-#     print html
-#     """
-#     with open(filename,'w') as t:
-        
-#         print("""
-# <HTML>
-# <head>
-# </head>
-# <body>""", file=t)
-#         print("""
-# <hr>
-# <p>Based on data from <a href='https://malindo.aa-ken.jp/TUFSOpenLgResources.html'>TUFS Open Language Resources</a>
-# <p>This view created by Francis Bond
-# </body>
-# </html>""", file=t)
+                # Usage-level instances (primary examples)
+                iids = usage_inst[lang].get(uid, [])
+                ex_records: list[str] = []
+                for iid in iids:
+                    if iid in inst[lang]:
+                        s, r, f, _p = inst[lang][iid]
+                        ex_records.append(_encode_example(s, r, f, ""))
 
-               #     stats=dd(int)
-#     for b in sorted(bunrui, key=lambda x: bunrui_t[x]):
-#         ### messy html
-#         tid = b
-#         print("""<h3><a name='{3}'>{0} ({1}: {2}) id={3}, pos={4}</a></h3>
-#         """.format(bunrui[b], bunrui_t[b],
-#                    st[bunrui_t[b][:4]]['en'], b,
-#                    bunrui2pos[bunrui_t[b][0]]),
-#               file=html)
-#         print ("{} ({}: {}) id={}".format(bunrui[b], bunrui_t[b],
-#                                        st[bunrui_t[b][:4]]['en'], b))
-#         ws = [] # for dic matching
-#         print("""    <table border>\n""", file=html)
-     
-#         print ("""    <tr>
-#           <th>Language</th>
-#           <th>Lemma</th>
-#           <th>Cleaned</th>
-#           <th>Meaning</th>
-#           <th>Example</th>
-#         </tr>""", file=html)
-#         #print (sense[tid].keys()
-#         for l in sorted(sense[tid].keys()):
-#             stats[l] += len(sense[tid][l])
-#             (wid, explanation, iid) = sense[tid][l]
-#             w = word[l][wid]
-#             if w == '':
-#                 continue
-#             cleaned = []
-#             for (lem,typ) in clean(w,l):
-#                 if not typ:
-#                     cleaned.append(lem)
-#                 else:
-#                     cleaned.append(lem + ' (' + typ  + ')')
-#                 ws.append(l2l3(l)[0] +'|' + lem)
-#             ### print language
-#             print("""  <tr>\n""", file=html)
-#             print('<td>{}</td>'.format(l2l3(l)[1],l),file=html)
-#     #         s= <img class='basicSound' src='./img/speaker_box_out.gif' id='sndmk_946'/>
-#     # <a href='./sound/word/word_946.mp3'><img id='sndmk_0' class='wordSoundLink' src='./img/soundmark_out.gif'></a>
-#     #	🔊
-#             url='http://www.coelang.tufs.ac.jp/mt/{0}/vmod'.format(l)
-#             print("""<td><a href='{0}/v_search_detail.php?id={1}'>{2}</a>
-#             (<a href='{0}/sound/word/word_{1}.mp3'/>🔊</a>)</td>""".format(url,
-#                                                                        wid,
-#                                                                        w),file=html)
-#             print("<td>{}</td>".format('; '.join(cleaned)),file=html)
-#             print('<td>{}</td>'.format(explanation),file=html)
-#             if inst[l][iid]:
-#                 print("<td>{2} (<a href='{0}/sound/inst/inst_{1}.mp3'>🔊</a>)<br>{3}</td>".format(url,
-#                                                                                                  iid,
-#                                                                                                  inst[l][iid][0],
-#                                                                                                  inst[l][iid][1]),file=html)
-#             else:
-#                 print('<td><br></td>', file=html)
-#             print("""  </tr>\n""", file=html)
-#         print("""    <table>\n""", file=html)
-#         ### output for LUIS
-#         if ws:
-#             sens=bunrui[b] + ':' + bunrui_t[b]
-#             comment='tufs_id='+b
-#             print('TUFS', bunrui2pos[bunrui_t[b][0]], sens,
-#                   ', '.join(ws),
-#                   comment, '', '', '', '', '', '', '', 
-#                   sep='\t',file=luis)
-#     print("""<hr>
-#     <p>Based on data from <a href='https://malindo.aa-ken.jp/TUFSOpenLgResources.html'>TUFS Open Language Resources</a>
-#     <p>This view created by Francis Bond
-#     </body>
-#     </html>""",
-#               file=html)
-#     html.close()
-                
+                # Word-level extra instances from t_word_inst_rel
+                existing_iids = set(iids)
+                for iid, token in word_inst[lang].get(word_id, []):
+                    if iid not in existing_iids:
+                        existing_iids.add(iid)
+                        iids.append(iid)
+                        if iid in inst_full[lang]:
+                            s, r, f, _p = inst_full[lang][iid]
+                            offset = find_token_offset(s, token) if token else -1
+                            tok_field = f"{token}:{offset}" if token and offset >= 0 else token
+                            ex_records.append(_encode_example(s, r, f, tok_field))
 
-                
-def main():
-    langs = ["ar", "as", "de", "en", "es", "fr", "id",
-         "ja", 
-         "km", "ko", "lo", "mn",
-         "ms",
-         "my",
-         "pb", "pt", "ru", "th",
-         "tl", "tr", "ur", "vi", "zh"]
-    data  = fetch_data(datadir, langs)
-    print_tsv('test-tufs-vocab.tsv', data)
-    #print_html('onew.html',data)
-    return None
+                tufs_id = u2t[lang].get(uid)
+                scene_labels = ",".join(scenes_map[lang].get(uid, []))
+
+                print(
+                    tufs_id,
+                    lang,
+                    word_id,
+                    "; ".join(cleaned_parts),
+                    explanation,
+                    ";".join(iids),
+                    ";;;".join(ex_records) if ex_records else "",
+                    "1" if is_basic else "0",
+                    scene_labels,
+                    bc.get(tufs_id, ""),
+                    sep="\t",
+                    file=out,
+                )
+
+
+def main() -> None:
+    """Extract TUFS vocabulary to a combined TSV file (tufs-vocab.tsv)."""
+    langs = [
+        "ar", "as", "de", "en", "es", "fr", "id", "ja",
+        "km", "ko", "lo", "mn", "ms", "my", "pb", "pt",
+        "ru", "th", "tl", "tr", "ur", "vi", "zh",
+    ]
+    data = fetch_data(DATADIR, langs)
+    print_tsv("tufs-vocab.tsv", data)
+
 
 if __name__ == "__main__":
     main()
-
- 
-
-
-
-
-
-
-# # 
-# bunrui2pos = dd(lambda: '?')
-# bunrui2pos['1'] = 'n'
-# bunrui2pos['2'] = 'v'
-# bunrui2pos['3'] = 'a'
-# bunrui2pos['4'] = 'r'
-
-
-
-
-# def main():
-#     st =read_bunrui_names(datadir + "/bunrui_names.tsv")
-#     luis =open ('luis-vocab.tsv','w')
-#     html=open ('tufs-vocab.html','w')
-#     print("""<HTML>
-#       <head>
-#       </head>
-#       <body>""",
-#               file=html)
-    
-#     stats=dd(int)
-#     for b in sorted(bunrui, key=lambda x: bunrui_t[x]):
-#         ### messy html
-#         tid = b
-#         print("""<h3><a name='{3}'>{0} ({1}: {2}) id={3}, pos={4}</a></h3>
-#         """.format(bunrui[b], bunrui_t[b],
-#                    st[bunrui_t[b][:4]]['en'], b,
-#                    bunrui2pos[bunrui_t[b][0]]),
-#               file=html)
-#         print ("{} ({}: {}) id={}".format(bunrui[b], bunrui_t[b],
-#                                        st[bunrui_t[b][:4]]['en'], b))
-#         ws = [] # for dic matching
-#         print("""    <table border>\n""", file=html)
-     
-#         print ("""    <tr>
-#           <th>Language</th>
-#           <th>Lemma</th>
-#           <th>Cleaned</th>
-#           <th>Meaning</th>
-#           <th>Example</th>
-#         </tr>""", file=html)
-#         #print (sense[tid].keys()
-#         for l in sorted(sense[tid].keys()):
-#             stats[l] += len(sense[tid][l])
-#             (wid, explanation, iid) = sense[tid][l]
-#             w = word[l][wid]
-#             if w == '':
-#                 continue
-#             cleaned = []
-#             for (lem,typ) in clean(w,l):
-#                 if not typ:
-#                     cleaned.append(lem)
-#                 else:
-#                     cleaned.append(lem + ' (' + typ  + ')')
-#                 ws.append(l2l3(l)[0] +'|' + lem)
-#             ### print language
-#             print("""  <tr>\n""", file=html)
-#             print('<td>{}</td>'.format(l2l3(l)[1],l),file=html)
-#     #         s= <img class='basicSound' src='./img/speaker_box_out.gif' id='sndmk_946'/>
-#     # <a href='./sound/word/word_946.mp3'><img id='sndmk_0' class='wordSoundLink' src='./img/soundmark_out.gif'></a>
-#     #	🔊
-#             url='http://www.coelang.tufs.ac.jp/mt/{0}/vmod'.format(l)
-#             print("""<td><a href='{0}/v_search_detail.php?id={1}'>{2}</a>
-#             (<a href='{0}/sound/word/word_{1}.mp3'/>🔊</a>)</td>""".format(url,
-#                                                                        wid,
-#                                                                        w),file=html)
-#             print("<td>{}</td>".format('; '.join(cleaned)),file=html)
-#             print('<td>{}</td>'.format(explanation),file=html)
-#             if inst[l][iid]:
-#                 print("<td>{2} (<a href='{0}/sound/inst/inst_{1}.mp3'>🔊</a>)<br>{3}</td>".format(url,
-#                                                                                                  iid,
-#                                                                                                  inst[l][iid][0],
-#                                                                                                  inst[l][iid][1]),file=html)
-#             else:
-#                 print('<td><br></td>', file=html)
-#             print("""  </tr>\n""", file=html)
-#         print("""    <table>\n""", file=html)
-#         ### output for LUIS
-#         if ws:
-#             sens=bunrui[b] + ':' + bunrui_t[b]
-#             comment='tufs_id='+b
-#             print('TUFS', bunrui2pos[bunrui_t[b][0]], sens,
-#                   ', '.join(ws),
-#                   comment, '', '', '', '', '', '', '', 
-#                   sep='\t',file=luis)
-#     print("""<hr>
-#     <p>Based on data from <a href='https://malindo.aa-ken.jp/TUFSOpenLgResources.html'>TUFS Open Language Resources</a>
-#     <p>This view created by Francis Bond
-#     </body>
-#     </html>""",
-#               file=html)
-#     html.close()
-#     luis.close()
-    
-            
-#     fh =open('tufgoi.tex', 'w')
-#     print("\\begin{tabular}{llrrrl} ", file=fh)
-#     print("Language& & Concepts\t& Words & \% in WN & Comment \\\\\n\\hline ", file=fh)
-#     total = dd(int)
-#     for l in sorted(stats.keys()):
-#         l3, language=l2l3(l)
-#         shared=set()
-#         bad =0
-#         for i in word[l]:
-#             #w = clean(i, l)[0][0]
-#             w = word[l][i]
-#             if (not w) or w=="":
-#                 bad+=1
-#                 continue
-#             w = clean(w,l)[0][0]    
-#             w_ = w.replace(' ','_')
-#             try:
-#                 if wn.synsets(w, lang=l3) or wn.synsets(w_, lang=l3): 
-#                     shared.add(w)
-#                 else:
-#                     print('"{}" not found in wn ({})'.format(w,l))
-#             except:
-#                 True
-#         print("{} & {}\t&{:6,d}\t&{:6,d} & {:d}\\\\".format(language, l,
-#                                                           stats[l], len(word[l]),
-#                                                           round(100* len(shared)/(len(word[l])-bad))
-#         ), file=fh)
-#         total['words'] += len(word[l])
-#         total['concepts'] += stats[l]
-#     print("{}\t&{:6,d}\t&{:6,d} \\\\".format('Total',
-#                                        total['concepts'], total['words']), file=fh)
-#     print("\\end{tabular}", file=fh)
-#     fh.close()
-    
-#     for sp in  sorted(super_w.keys()):
-#         lxn = dd(float)
-#         for w in super_w[sp]['en']:
-#             for l in wn.lemmas(w):
-#                 lxn[l.synset().lexname()] += l.count() + .5
-#         print (sp, st[sp]['en'], ",".join(super_w[sp]['en']), sep='\t')
-#         stp = (0, 'Unknown')
-#         if len(lxn.items()) > 0:
-#             stp=sorted([(f,w) for (w, f) in lxn.items()])[-1]
-        
-#         print ('', '', stp, sep='\t')
-#         #print ('', '', lxn, sep='\t')
-        
-# if __name__ == "__main__":
-#     main()

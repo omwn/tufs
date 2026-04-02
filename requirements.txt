@@ -1,4 +1,4 @@
-iso-639
 wn
+wn-edit
 tabulate
-
+pytest
