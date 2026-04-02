@@ -33,7 +33,7 @@ for arg in "$@"; do
 done
 
 # ── 0. Python environment ────────────────────────────────────────────────────
-VENV="$PROJECT_DIR/.venv"
+VENV="$PROJECT_DIR/.venv312"
 if [[ ! -d "$VENV" ]]; then
     uv venv --python 3.12 "$VENV"
     uv pip install --quiet -r "$PROJECT_DIR/requirements.txt" \
