@@ -72,20 +72,39 @@ Integration tests (`test_db.py`) check the built `docs/cygnet/tufs.db.gz`.
 
 ---
 
-## Release 
+## Release
 
 The typical workflow is:
 ```bash
-bash build.sh                       # build + validate XMLs
+bash build.sh                       # build + validate XMLs + deploy docs/
 bash make-release.sh                # build tarballs + wn load test (inspect locally)
 bash make-release.sh --pre-release  # tag, push, create pre-release on GitHub
-# ... test the pre-release, check the web UI, share for review ...
+# ... test locally with run.sh, share for review ...
 bash make-release.sh --release      # promotes the existing pre-release (no re-upload)
 ```
 
-If you discover a bug after pre-release that requires rebuilding the
-XMLs with a new version number. Then you  bump VERSION,
-rebuild, and release under the new version.
+If you discover a bug after pre-release that requires rebuilding the XMLs, bump
+`VERSION`, rebuild, and release under the new version.
+
+### GitHub Pages deployment
+
+The web UI at `https://omwn.github.io/tufs/` is deployed by the GitHub Actions
+workflow in `.github/workflows/pages.yml`.  It runs automatically on every
+published release and can also be triggered manually via `gh workflow run`.
+
+**Why a workflow instead of committing the DB files?**  The `.db.gz` files are
+~40 MB total and change with every release — too large to track in git.  GitHub
+also blocks cross-origin fetches from `releases/latest/download/` (CORS policy),
+so the browser cannot load them directly.  The workflow solves both problems by
+downloading the DB files from the release assets and deploying them alongside
+`docs/` as a single Pages artifact — same origin, no CORS issue.
+
+The Pages source must be set to **GitHub Actions** (not "Deploy from branch") in
+the repo's Settings → Pages.  If you ever need to re-deploy without a new
+release, run:
+```bash
+gh workflow run pages.yml --repo omwn/tufs
+```
 
 
 ---
