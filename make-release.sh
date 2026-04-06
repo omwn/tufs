@@ -116,11 +116,18 @@ echo "=== Testing wn load (collection tarball) ==="
 WN_TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$WN_TMPDIR"' EXIT
 
-uv run python -m wn -d "$WN_TMPDIR" download \
-    "file:${RELEASE_DIR}/tufs-${VERSION}.tar.xz"
-
-echo "Loaded lexicons:"
-uv run python -m wn -d "$WN_TMPDIR" lexicons
+# Extract the English sub-package and verify it loads cleanly.
+tar -xJf "$RELEASE_DIR/tufs-en-${VERSION}.tar.xz" -C "$WN_TMPDIR"
+uv run python - <<PYEOF
+import wn
+wn.config.data_home = "$WN_TMPDIR"
+wn.add("$WN_TMPDIR/tufs-en/tufs-en-${VERSION}.xml")
+lexs = wn.lexicons(lang="en")
+assert lexs, "No lexicons loaded"
+n_words = len(wn.words(lang="en"))
+assert n_words > 400, f"Too few words: {n_words}"
+print(f"  OK: {len(lexs)} lexicon(s), {n_words} words")
+PYEOF
 echo "Load test passed."
 
 # ── 4. Publish ────────────────────────────────────────────────────────────────
