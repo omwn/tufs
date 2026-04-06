@@ -13,8 +13,8 @@
 
 set -euo pipefail
 
-VERSION="2026.04.06"
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
+VERSION="$(cat "$PROJECT_DIR/VERSION")"
 CYGNET_DIR="$PROJECT_DIR/external/cygnet"
 SCRIPT_DIR="$PROJECT_DIR/scripts"
 BLDDIR="$PROJECT_DIR/build/tufs-$VERSION"
@@ -60,7 +60,16 @@ if $DO_LMF; then
     uv run python "$SCRIPT_DIR/munge.py"
 
     echo "=== Building LMF XML ==="
-    uv run python "$SCRIPT_DIR/tufs2wn.py"
+    TUFS_VERSION="$VERSION" uv run python "$SCRIPT_DIR/tufs2wn.py"
+
+    echo "=== Validating LMF XML ==="
+    while IFS='|' read -r local_code _bcp47 _en _native; do
+        [[ -z "$local_code" ]] && continue
+        xml="$PROJECT_DIR/build/lmf/tufs-$local_code.xml"
+        if [[ -f "$xml" ]]; then
+            uv run python -m wn validate "$xml"
+        fi
+    done < "$LANGFILE"
     echo
 fi
 

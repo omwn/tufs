@@ -5,6 +5,7 @@ Uses wn_edit and wn.lmf.dump() directly, bypassing the tsv2lmf.py pipeline.
 Output: one XML file per language written to build/lmf/tufs-{lang}.xml.
 """
 
+import os
 import re
 import sys
 import warnings
@@ -42,7 +43,7 @@ _TAG_PINYIN = 'orth:pīnyīn'
 _VAR_PINYIN = 'zh-pinyin'
 _VAR_JA_HIRA = 'ja-Hira'
 
-VERSION = "2.0"
+VERSION = os.environ.get("TUFS_VERSION", "2.0")
 EMAIL = "bond@ieee.org"
 LICENSE = "https://creativecommons.org/licenses/by/4.0/"
 BASE_URL = "https://github.com/omwn/tufs/"
