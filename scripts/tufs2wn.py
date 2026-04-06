@@ -422,6 +422,7 @@ def build_lexicon(
     #              'morph_var': ..., 'hira_form': ..., 'senses': [...]}}
     entry_data: dict[tuple[str, str], dict] = {}
     seen_sids: set[str] = set()
+    referenced_synsets: set[str] = set()
     synset_ilis: dict[str, str] = {}
     # English meaning extracted from 【意味】 for TUFS-internal synsets.
     # Prevents cygnet Phase 3 from pruning definition-less synsets.
@@ -497,6 +498,7 @@ def build_lexicon(
                         counts=[make_count(freq)] if freq > 0 else None,
                         meta=sense_meta or None,
                     )
+                    referenced_synsets.add(ssid_lmf)
 
                     key = (lm, pos)
                     if key not in entry_data:
@@ -556,6 +558,7 @@ def build_lexicon(
             ),
         )
         for ssid_lmf, ili in synset_ilis.items()
+        if ssid_lmf in referenced_synsets
     ]
 
     return make_lexicon(
