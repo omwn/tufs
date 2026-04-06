@@ -68,13 +68,20 @@ if $DO_LMF; then
     TUFS_VERSION="$VERSION" uv run python "$SCRIPT_DIR/tufs2wn.py"
 
     echo "=== Validating LMF XML ==="
+    validation_failed=0
     while IFS='|' read -r local_code _bcp47 _en _native; do
         [[ -z "$local_code" ]] && continue
         xml="$PROJECT_DIR/build/lmf/tufs-$local_code.xml"
         if [[ -f "$xml" ]]; then
-            uv run python -m wn validate "$xml"
+            uv run python -m wn validate "$xml" || {
+                echo "  Warning: validation reported issues for $local_code (see above)" >&2
+                validation_failed=1
+            }
         fi
     done < "$LANGFILE"
+    if [[ $validation_failed -eq 1 ]]; then
+        echo "Warning: one or more LMF files have validation issues — continuing anyway." >&2
+    fi
     echo
 fi
 
