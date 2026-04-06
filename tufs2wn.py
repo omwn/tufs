@@ -18,6 +18,8 @@ import wn.lmf as wn_lmf
 from wn_edit.editor import (
     make_count,
     make_example,
+    make_form,
+    make_definition,
     make_lexical_entry,
     make_lexical_resource,
     make_lemma,
@@ -46,6 +48,27 @@ LICENSE = "https://creativecommons.org/licenses/by/4.0/"
 BASE_URL = "https://github.com/omwn/tufs/"
 AUDIO_BASE = "https://www.coelang.tufs.ac.jp/mt/{lang}/vmod/sound/word/word_{wid}.mp3"
 
+CITATION = (
+    "Francis Bond, Hiroki Nomoto, Luís Morgado da Costa, and Arthur Bond. 2020. "
+    "Linking the TUFS Basic Vocabulary to the Open Multilingual Wordnet. "
+    "In Proceedings of the Twelfth Language Resources and Evaluation Conference, "
+    "pages 3181–3188, Marseille, France. European Language Resources Association. "
+    "https://aclanthology.org/2020.lrec-1.389/"
+)
+
+DESCRIPTION = (
+    "Wordnet built from the Tokyo University of Foreign Studies (TUFS) basic vocabulary. "
+    "It consists of a core of around 600 concepts linked to the Open Multilingual Wordnet "
+    "via a hand-built mapping (confidence 95%), plus additional language-specific entries "
+    "with examples and pronunciation. "
+    "Covers 23 languages: Arabic, Assamese, Burmese, Chinese (Mandarin), English, French, "
+    "Spanish, Filipino, German, Indonesian, Japanese, Khmer, Korean, Lao, Malay, Mongolian, "
+    "Portuguese, Portuguese (Brazilian), Russian, Thai, Turkish, Urdu, and Vietnamese. "
+    "Source: TUFS Open Language Resources https://malindo.aa-ken.jp/TUFSOpenLgResources.html"
+)
+
+CONFIDENCE = 0.95
+
 _L2BCP47: dict[str, str] = {
     "ar": "arb", "as": "apc", "de": "de", "en": "en",
     "es": "es", "fr": "fr", "id": "id", "ja": "ja",
@@ -71,6 +94,9 @@ _MORPH_TAGS: dict[str, str] = {
 _CJK_RE = re.compile(
     r'[\u3040-\u30ff\u4e00-\u9fff\uff00-\uffef\u3000-\u303f]'
 )
+# Matches kanji or katakana — used to decide whether a yomi variant is needed.
+# Lemmas that contain neither (i.e. already hiragana) don't need a separate hira form.
+_KANJI_OR_KATA_RE = re.compile(r'[\u4e00-\u9fff\u30a0-\u30ff]')
 
 _CHAR_ESCAPES: dict[str, str] = {
     ' ': '_', '\u3000': '_', '~': '-tilde-',
@@ -202,14 +228,15 @@ def cid_info(filename: str) -> tuple[dict[str, list], set[str]]:
     langs: set[str] = set()
 
     with open(filename) as fh:
+        next(fh)  # skip header: cid lang wid lemma comment iids examples is_basic scenes bunrui
         for line in fh:
             parts = line.rstrip('\n').split('\t')
             cid, lng, wid = parts[0], parts[1], parts[2]
             lem, com = parts[3], parts[4]
-            exe = parts[6] if len(parts) > 6 else ''
-            is_basic = parts[7] == '1' if len(parts) > 7 else True
-            scenes = parts[8] if len(parts) > 8 else ''
-            bunrui = parts[9] if len(parts) > 9 else ''
+            exe = parts[6]
+            is_basic = parts[7] == '1'
+            scenes = parts[8]
+            bunrui = parts[9]
             langs.add(lng)
 
             matches = _MORPH_RE.findall(com.replace('\u200f', ''))
@@ -292,6 +319,18 @@ def _parse_examples(exe: str) -> list[tuple[str, str, str, str]]:
         if sentence:
             records.append((sentence, reading, function, token))
     return records
+
+
+def _extract_meaning(com: str) -> str:
+    """Extract the English meaning from the 【意味】 comment field.
+
+    Returns the first semicolon-separated part of the 【意味】 section,
+    or an empty string if absent.
+    """
+    if '【意味】' not in com:
+        return ''
+    raw = com.split('【意味】', 1)[1].strip('; \t')
+    return raw.split(';')[0].strip() if raw else ''
 
 
 def _example_note(sentence: str, reading: str, function: str, token: str) -> Optional[str]:
@@ -379,25 +418,45 @@ def build_lexicon(
     bcp47 = _L2BCP47.get(lang, lang)
 
     # {(lm, pos): {'audio': ..., 'pron_text': ..., 'pron_variety': ...,
-    #              'morph_var': ..., 'senses': [...]}}
+    #              'morph_var': ..., 'hira_form': ..., 'senses': [...]}}
     entry_data: dict[tuple[str, str], dict] = {}
     seen_sids: set[str] = set()
     synset_ilis: dict[str, str] = {}
+    # English meaning extracted from 【意味】 for TUFS-internal synsets.
+    # Prevents cygnet Phase 3 from pruning definition-less synsets.
+    synset_defs: dict[str, str] = {}
 
     for ssid, concept_ids in syns.items():
         pos = 'a' if ssid.endswith(('-a', '-s')) else ssid[-1]
         ssid_lmf = _synset_lmf_id(lexid, ssid)
-        synset_ilis[ssid_lmf] = ili_map.get(_ssid_norm(ssid), '')
+        ili = ili_map.get(_ssid_norm(ssid), '')
+        synset_ilis[ssid_lmf] = ili
+        # Collect English meaning for internal (non-ILI) synsets from any entry
+        if not ili:
+            for cid in concept_ids:
+                for _lng, com, *_ in info.get(cid, []):
+                    meaning = _extract_meaning(com)
+                    if meaning:
+                        synset_defs[ssid_lmf] = meaning
+                        break
+                if ssid_lmf in synset_defs:
+                    break
 
         for cid in concept_ids:
             for lng, com, lem, exe, wid, is_basic, scenes, _bunrui in info.get(cid, []):
                 if lng != lang:
                     continue
 
-                # Extract Japanese reading (yomi) from structured comment field
+                # Extract Japanese reading (yomi) from structured comment field.
+                # yomi is added as a <Form> variant on the main kanji entry,
+                # not as a separate LexicalEntry.  Skip if the head word is
+                # already hiragana (no kanji/katakana to read out).
                 yomi = ''
                 if lang == 'ja' and '【よみ】' in com:
                     yomi = com.split('【よみ】', 1)[1].split('【意味】')[0].strip('; \t')
+                    first_lm = split_lem(lem.split(';')[0].strip())[0]
+                    if not (yomi and _KANJI_OR_KATA_RE.search(first_lm)):
+                        yomi = ''
 
                 ex_parts = _parse_examples(exe)
                 all_sentences_lower = ' '.join(s for s, *_ in ex_parts).lower()
@@ -451,6 +510,7 @@ def build_lexicon(
                             'pron_text': pron_text,
                             'pron_variety': pron_variety,
                             'morph_var': var if tag == _TAG_MORPH else '',
+                            'hira_form': yomi if (yomi and not tag) else '',
                             'senses': [],
                         }
                     elif tag == _TAG_MORPH and not entry_data[key]['morph_var']:
@@ -467,17 +527,32 @@ def build_lexicon(
         tags = [{'category': 'morph', 'text': ed['morph_var']}] if ed['morph_var'] else None
 
         lemma = make_lemma(lm, pos, pronunciations=[pron], tags=tags)
+        forms = (
+            [make_form(ed['hira_form'], tags=[{'category': 'morph', 'text': 'hira'}])]
+            if ed.get('hira_form') else None
+        )
         lmf_entries.append(
             make_lexical_entry(
                 _entry_lmf_id(lexid, lm, pos),
                 lemma,
+                forms=forms,
                 senses=ed['senses'],
             )
         )
 
-    # Build minimal Synset shells (ILI links only)
+    # Build Synset shells — ILI-linked synsets get no definition (OEWN provides
+    # it); internal synsets get their English meaning from 【意味】 so cygnet's
+    # Phase 3 (cascade-delete synsets without definitions) keeps them.
     lmf_synsets = [
-        make_synset(ssid_lmf, ssid_lmf[-1], ili=ili or None)
+        make_synset(
+            ssid_lmf,
+            ssid_lmf[-1],
+            ili=ili or None,
+            definitions=(
+                [make_definition(synset_defs[ssid_lmf])]
+                if not ili and ssid_lmf in synset_defs else None
+            ),
+        )
         for ssid_lmf, ili in synset_ilis.items()
     ]
 
@@ -489,8 +564,10 @@ def build_lexicon(
         license=LICENSE,
         version=VERSION,
         url=BASE_URL,
+        citation=CITATION,
         entries=lmf_entries,
         synsets=lmf_synsets,
+        meta={'description': DESCRIPTION, 'confidence': str(CONFIDENCE)},
     )
 
 
