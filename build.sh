@@ -87,6 +87,9 @@ if $DO_LMF; then
     else
         echo "All LMF files passed validation."
     fi
+
+    echo "=== Validation summary ==="
+    uv run python "$SCRIPT_DIR/validation_summary.py" | tee "$PROJECT_DIR/build/validation-summary.txt"
     echo
 fi
 
