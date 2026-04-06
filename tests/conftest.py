@@ -6,8 +6,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-# Make the repo root importable so tests can import tufs2wn, munge, etc.
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Make scripts/ importable so tests can import tufs2wn, munge, etc.
+sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
 import pytest
 
@@ -26,17 +26,17 @@ def _open_db(gz_path: Path) -> sqlite3.Connection:
 
 @pytest.fixture(scope="session")
 def main_db() -> sqlite3.Connection:
-    gz = REPO / "docs" / "tufs.db.gz"
+    gz = REPO / "docs" / "cygnet" / "tufs.db.gz"
     if not gz.exists():
-        pytest.skip("docs/tufs.db.gz not present — run bash build.sh first")
+        pytest.skip("docs/cygnet/tufs.db.gz not present — run bash build.sh first")
     return _open_db(gz)
 
 
 @pytest.fixture(scope="session")
 def provenance_db() -> sqlite3.Connection:
-    gz = REPO / "docs" / "tufs-provenance.db.gz"
+    gz = REPO / "docs" / "cygnet" / "tufs-provenance.db.gz"
     if not gz.exists():
-        pytest.skip("docs/tufs-provenance.db.gz not present — run bash build.sh first")
+        pytest.skip("docs/cygnet/tufs-provenance.db.gz not present — run bash build.sh first")
     return _open_db(gz)
 
 

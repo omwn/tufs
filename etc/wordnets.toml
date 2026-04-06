@@ -1,0 +1,30 @@
+# TUFS wordnet sources for Cygnet build.
+# en must list OEWN first (required by Cygnet for synset structure).
+# All other keys are BCP 47 language codes.
+
+en    = [
+    "https://en-word.net/static/english-wordnet-2025-plus.xml.gz",
+    "https://github.com/omwn/tufs/releases/download/v2.0/tufs-en-2.0.tar.xz"
+]
+ar    = ["https://github.com/omwn/tufs/releases/download/v2.0/tufs-ar-2.0.tar.xz"]
+as    = ["https://github.com/omwn/tufs/releases/download/v2.0/tufs-as-2.0.tar.xz"]
+de    = ["https://github.com/omwn/tufs/releases/download/v2.0/tufs-de-2.0.tar.xz"]
+es    = ["https://github.com/omwn/tufs/releases/download/v2.0/tufs-es-2.0.tar.xz"]
+fr    = ["https://github.com/omwn/tufs/releases/download/v2.0/tufs-fr-2.0.tar.xz"]
+id    = ["https://github.com/omwn/tufs/releases/download/v2.0/tufs-id-2.0.tar.xz"]
+ja    = ["https://github.com/omwn/tufs/releases/download/v2.0/tufs-ja-2.0.tar.xz"]
+km    = ["https://github.com/omwn/tufs/releases/download/v2.0/tufs-km-2.0.tar.xz"]
+ko    = ["https://github.com/omwn/tufs/releases/download/v2.0/tufs-ko-2.0.tar.xz"]
+lo    = ["https://github.com/omwn/tufs/releases/download/v2.0/tufs-lo-2.0.tar.xz"]
+mn    = ["https://github.com/omwn/tufs/releases/download/v2.0/tufs-mn-2.0.tar.xz"]
+zsm   = ["https://github.com/omwn/tufs/releases/download/v2.0/tufs-ms-2.0.tar.xz"]
+my    = ["https://github.com/omwn/tufs/releases/download/v2.0/tufs-my-2.0.tar.xz"]
+pt-BR = ["https://github.com/omwn/tufs/releases/download/v2.0/tufs-pb-2.0.tar.xz"]
+pt    = ["https://github.com/omwn/tufs/releases/download/v2.0/tufs-pt-2.0.tar.xz"]
+ru    = ["https://github.com/omwn/tufs/releases/download/v2.0/tufs-ru-2.0.tar.xz"]
+th    = ["https://github.com/omwn/tufs/releases/download/v2.0/tufs-th-2.0.tar.xz"]
+fil   = ["https://github.com/omwn/tufs/releases/download/v2.0/tufs-tl-2.0.tar.xz"]
+tr    = ["https://github.com/omwn/tufs/releases/download/v2.0/tufs-tr-2.0.tar.xz"]
+ur    = ["https://github.com/omwn/tufs/releases/download/v2.0/tufs-ur-2.0.tar.xz"]
+vi    = ["https://github.com/omwn/tufs/releases/download/v2.0/tufs-vi-2.0.tar.xz"]
+zh    = ["https://github.com/omwn/tufs/releases/download/v2.0/tufs-zh-2.0.tar.xz"]

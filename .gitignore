@@ -1,0 +1,17 @@
+# Python
+.venv
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Build artifacts
+build/
+
+# External dependencies (auto-cloned)
+external/
+
+# Cygnet databases (large binaries — attached to GitHub releases)
+docs/cygnet/*.db.gz
+
+# Editor backups
+*~

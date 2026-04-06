@@ -1,16 +1,19 @@
 """Extract TUFS vocabulary data from SQL dumps into a combined TSV file.
 
-Intermediate TSV columns (tab-separated, 9 fields):
-  1. cid       – TUFS concept ID (may be None for non-mapped words)
-  2. lang      – ISO 639-1 language code
-  3. wid       – word ID within the language SQL dump
-  4. lemma     – semicolon-separated lemma forms (with optional morph tags)
-  5. comment   – usage explanation / Japanese gloss
-  6. iids      – semicolon-separated instance IDs linked via t_usage_inst_rel
-  7. examples  – ;;;-separated example records, each pipe-separated:
-                   sentence | reading_or_trans | function_label | token_form
-  8. is_basic  – "1" if this usage is in the basic vocabulary (t_usage.selected=1)
-  9. scenes    – comma-separated scene/domain labels from t_scene
+The output TSV (tufs-vocab.tsv) has a header row followed by one data row per
+(concept, language) pair.  Columns (tab-separated):
+
+  cid       – TUFS concept ID (may be None for non-mapped words)
+  lang      – ISO 639-1 language code
+  wid       – word ID within the language SQL dump
+  lemma     – semicolon-separated lemma forms (with optional morph tags)
+  comment   – usage explanation / Japanese gloss
+  iids      – semicolon-separated instance IDs linked via t_usage_inst_rel
+  examples  – ;;;-separated example records, each pipe-separated:
+                sentence | reading_or_trans | function_label | token_form
+  is_basic  – "1" if this usage is in the basic vocabulary (t_usage.selected=1)
+  scenes    – comma-separated scene/domain labels from t_scene
+  bunrui    – Bunrui Goihyo classification code (leading digit gives POS)
 """
 
 import re
@@ -421,6 +424,8 @@ def print_tsv(filename: str, data: dict[str, dict]) -> None:
                 inst_full[lang][iid] = (target, trans.strip(), function.strip(), "")
 
     with open(filename, "w") as out:
+        print("cid", "lang", "wid", "lemma", "comment", "iids",
+              "examples", "is_basic", "scenes", "bunrui", sep="\t", file=out)
         for lang in usage:
             for uid, (word_id, explanation, is_basic) in usage[lang].items():
                 w = word[lang].get(word_id, "")

@@ -7,12 +7,16 @@
 # Usage: bash build.sh [--lmf-only] [--cygnet-only]
 #   --lmf-only      Build LMF XML only (skip Cygnet packaging)
 #   --cygnet-only   Run Cygnet packaging only (skip LMF XML build)
+#
+#  If you want to use a copy of cygnet locally, simlink it external/cygnet
+#  otherwise it will download the latest version
 
 set -euo pipefail
 
-VERSION="2.0"
+VERSION="2026.04.06"
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CYGNET_DIR="$(cd "$PROJECT_DIR/../cygnet" && pwd)"
+CYGNET_DIR="$PROJECT_DIR/external/cygnet"
+SCRIPT_DIR="$PROJECT_DIR/scripts"
 BLDDIR="$PROJECT_DIR/build/tufs-$VERSION"
 CYGNET_WORK="$PROJECT_DIR/build/cygnet-work"
 LANGFILE="$PROJECT_DIR/tufsdata/languages.txt"
@@ -32,24 +36,31 @@ for arg in "$@"; do
     esac
 done
 
-# ── 0. Python environment ────────────────────────────────────────────────────
-VENV="$PROJECT_DIR/.venv312"
-if [[ ! -d "$VENV" ]]; then
-    uv venv --python 3.12 "$VENV"
-    uv pip install --quiet -r "$PROJECT_DIR/requirements.txt" \
-        -e /home/bond/git/wn_edit \
-        --python "$VENV/bin/python"
+
+
+# ── 0. Python environment and dependencies ───────────────────────────────────
+echo "=== Prepare environment and dependencies ==="
+mkdir -p  "$PROJECT_DIR/external"
+
+if [[ ! -d "$PROJECT_DIR/external/wn_edit" ]]; then
+    echo "Wn Editor not found at $PROJECT_DIR/external/wn_edit, cloning" >&2
+    git clone https://github.com/bond-lab/wn_edit "$PROJECT_DIR/external/wn_edit"
 fi
-# shellcheck source=/dev/null
-source "$VENV/bin/activate"
+
+
+if [[ ! -d .venv ]]; then
+    uv venv --python 3.12 
+    uv pip install --quiet -r "$PROJECT_DIR/requirements.txt" \
+        -e "$PROJECT_DIR/external/wn_edit" 
+fi
 
 # ── 1. Build LMF XML ─────────────────────────────────────────────────────────
 if $DO_LMF; then
     echo "=== Building intermediate TSV ==="
-    python "$PROJECT_DIR/munge.py"
+    uv run python "$SCRIPT_DIR/munge.py"
 
     echo "=== Building LMF XML ==="
-    python "$PROJECT_DIR/tufs2wn.py"
+    uv run python "$SCRIPT_DIR/tufs2wn.py"
     echo
 fi
 
@@ -58,9 +69,8 @@ if $DO_CYGNET; then
     echo "=== Running Cygnet packaging ==="
 
     if [[ ! -d "$CYGNET_DIR" ]]; then
-        echo "Error: cygnet not found at $CYGNET_DIR" >&2
-        echo "Clone it with: git clone https://github.com/globalwordnet/cygnet ../cygnet" >&2
-        exit 1
+	echo "Cygnet not found at $CYGNET_DIR, cloning" >&2
+	git clone -b issue-17-wordnet-summary-page --single-branch https://github.com/omwn/cygnet "$CYGNET_DIR"
     fi
 
     mkdir -p "$CYGNET_WORK/bin/raw_wns"
@@ -83,12 +93,13 @@ if $DO_CYGNET; then
 
     echo
     echo "=== Deploying to docs/ ==="
-    mkdir -p "$PROJECT_DIR/docs"
-    cp "$CYGNET_DIR/web/index.html"          "$PROJECT_DIR/docs/"
-    cp "$CYGNET_DIR/web/relations.json"       "$PROJECT_DIR/docs/"
-    cp "$CYGNET_DIR/web/omw-logo.svg"         "$PROJECT_DIR/docs/" 2>/dev/null || true
-    cp "$PROJECT_DIR/etc/local.json"          "$PROJECT_DIR/docs/"
-    cp "$CYGNET_WORK/web/cygnet.db.gz"        "$PROJECT_DIR/docs/tufs.db.gz"
-    cp "$CYGNET_WORK/web/provenance.db.gz"    "$PROJECT_DIR/docs/tufs-provenance.db.gz"
+    mkdir -p "$PROJECT_DIR/docs/cygnet/img"
+    cp "$CYGNET_DIR/web/index.html"            "$PROJECT_DIR/docs/cygnet/"
+    cp "$CYGNET_DIR/web/relations.json"        "$PROJECT_DIR/docs/cygnet/"
+    cp "$CYGNET_DIR/web/img/"*.svg             "$PROJECT_DIR/docs/cygnet/img/" 2>/dev/null || true
+    cp "$PROJECT_DIR/etc/img/"*.svg            "$PROJECT_DIR/docs/cygnet/img/"
+    cp "$PROJECT_DIR/etc/local.json"           "$PROJECT_DIR/docs/cygnet/"
+    cp "$CYGNET_WORK/web/cygnet.db.gz"         "$PROJECT_DIR/docs/cygnet/tufs.db.gz"
+    cp "$CYGNET_WORK/web/provenance.db.gz"     "$PROJECT_DIR/docs/cygnet/tufs-provenance.db.gz"
     echo "Done — docs/ is ready for GitHub Pages."
 fi

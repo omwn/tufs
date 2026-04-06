@@ -1,0 +1,47 @@
+{
+  "title":   "TUFS Basic Vocabulary",
+  "name":    "TUFS",
+  "tagline": "Basic vocabulary for language learning — Tokyo University of Foreign Studies",
+  "icon":    "img/tufs-logo.svg",
+
+  "databases": {
+    "main": {
+      "filename":    "tufs.db.gz",
+      "url":         "https://github.com/omwn/tufs/releases/latest/download/tufs.db.gz",
+      "description": "Main lexical database — 23 languages linked to Open English WordNet."
+    },
+    "provenance": {
+      "filename":    "tufs-provenance.db.gz",
+      "url":         "https://github.com/omwn/tufs/releases/latest/download/tufs-provenance.db.gz",
+      "description": "Provenance records tracing every data point back to its source."
+    }
+  },
+    
+  "logo": {
+    "src":  "img/omw-logo.svg",
+    "url":  "https://omwn.org",
+    "alt":  "Open Multilingual Wordnet",
+    "name": "OMW"
+  },
+
+  "displayLanguage": "ja",
+
+  "about": {
+    "intro": "<p>The TUFS Basic Vocabulary links the core vocabulary used for language teaching at <a href='https://www.tufs.ac.jp/' style='text-decoration:underline'>Tokyo University of Foreign Studies</a>  (TUFS) with the Open Multilingual Wordnet.</p><p>Source code and data are at  <a href='https://github.com/omwn/tufs' style='text-decoration:underline'>GitHub</a>.  The interface uses Cygnet (Maudslay  &amp; Bond, 2026)</p>",
+    "citation": "If you use this resource, please cite Bond et al (2020).",
+    "languageData": "The TUFS Basic Vocabulary covers 23 languages: Arabic, Assamese, German, English, Spanish, French, Indonesian, Japanese, Khmer, Korean, Lao, Mongolian, Malay, Burmese, Portuguese (Brazil), Portuguese, Russian, Thai, Filipino, Turkish, Urdu, Vietnamese, and Chinese. All data is released under <a href='https://creativecommons.org/licenses/by/4.0/' style='text-decoration:underline'>CC BY 4.0</a>."
+  },
+
+  "publications": [
+      "Francis Bond, Hiroki Nomoto, Luis Morgado da Costa and Arthur Bond (2020). <a href='https://aclanthology.org/2020.lrec-1.389/' style='text-decoration:underline'>Linking the TUFS Basic Vocabulary to the Open Multilingual Wordnet</a>. In <em>Proceedings of the 12th Language Resources and Evaluation Conference (LREC 2020)</em>, pp. 3171–3177.",
+      "Rowan Hall Maudslay &amp; Francis Bond (2026). Cygnet: Refactoring the Open Multilingual Wordnet. In <em>Proceedings of the 15th International Conference on Language Resources and Evaluation (LREC 2026)</em>. (to appear)",
+      "Kawaguchi, Yuji. 2007. <a href='http://dx.doi.org/10.1075/ubli.6.02kaw'>Foundations of Center of Usage-Based Linguistic Informatics (UBLI)</a>. In Yuji Kawaguchi, Toshihiro Takagaki, Nobuo Tomimori and Yoichiro Tsuruga (eds.) <em>Corpus-Based Perspectives in Linguistics</em>, pp 3-28. Amsterdam: John Benjamins. DOI: <a href='http://dx.doi.org/10.1075/ubli.6.02kaw'>10.1075/ubli.6.02kaw</a>"],
+  "footer": {
+    "text": "Produced with the support of",
+    "logos": [
+	{ "src": "img/logo_tufs_en.svg", "alt": "Tokyo University of Foreign Studies",
+	  "url": "https://www.tufs.ac.jp/" }
+    ]
+  }
+
+}
