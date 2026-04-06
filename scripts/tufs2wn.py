@@ -479,6 +479,7 @@ def build_lexicon(
                             meta={'note': note} if (note := _example_note(sentence, reading, function, token)) else None,
                         )
                         for sentence, reading, function, token in ex_parts
+                        if sentence != 'CLEARED'
                     ]
 
                     sense_meta: dict = {}
