@@ -167,13 +167,20 @@ echo "  Pushed tag $TAG"
 
 # Create the GitHub release
 echo
+DB_MAIN="$PROJECT_DIR/docs/cygnet/tufs.db.gz"
+DB_PROV="$PROJECT_DIR/docs/cygnet/tufs-provenance.db.gz"
+for f in "$DB_MAIN" "$DB_PROV"; do
+    [[ -f "$f" ]] || { echo "Error: $f not found — run bash build.sh first." >&2; exit 1; }
+done
+
 if [[ "$MODE" == "pre-release" ]]; then
     echo "=== Creating GitHub pre-release $TAG ==="
     gh release create "$TAG" \
         --title "TUFS Basic Vocabulary ${VERSION}" \
         --notes-file "$PROJECT_DIR/etc/release-notes.md" \
         --prerelease \
-        "$RELEASE_DIR"/*.tar.xz
+        "$RELEASE_DIR"/*.tar.xz \
+        "$DB_MAIN" "$DB_PROV"
     echo "Pre-release $TAG created."
 else
     echo "=== Creating GitHub release $TAG ==="
@@ -181,6 +188,7 @@ else
         --title "TUFS Basic Vocabulary ${VERSION}" \
         --notes-file "$PROJECT_DIR/etc/release-notes.md" \
         --latest \
-        "$RELEASE_DIR"/*.tar.xz
+        "$RELEASE_DIR"/*.tar.xz \
+        "$DB_MAIN" "$DB_PROV"
     echo "Release $TAG created."
 fi
