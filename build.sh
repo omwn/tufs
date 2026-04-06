@@ -47,6 +47,11 @@ if [[ ! -d "$PROJECT_DIR/external/wn_edit" ]]; then
     git clone https://github.com/bond-lab/wn_edit "$PROJECT_DIR/external/wn_edit"
 fi
 
+if [[ ! -d "$PROJECT_DIR/external/cili" ]]; then
+    echo "CILI not found at $PROJECT_DIR/external/cili, cloning" >&2
+    git clone https://github.com/globalwordnet/cili "$PROJECT_DIR/external/cili"
+fi
+
 
 if [[ ! -d .venv ]]; then
     uv venv --python 3.12 

@@ -33,7 +33,7 @@ from munge import l2l3
 
 TUFS_OMW_MAP = "tufs-omw-map.tsv"
 TUFS_VOCAB = "tufs-vocab.tsv"
-ILI_MAP = Path("etc/cili/ili-map-pwn30.tab")
+ILI_MAP = Path("external/cili/ili-map-pwn30.tab")
 OUTDIR = Path("build/lmf")
 
 _BUNRUI_POS: dict[str, str] = {'1': 'n', '2': 'v', '3': 'a', '4': 'r'}
