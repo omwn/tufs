@@ -14,6 +14,9 @@
   <https://omwn.github.io/tufs/>.
 - **Japanese hiragana readings** added as `<Form>` variant entries within each
   kanji lemma (e.g. 月曜日 now has げつようび as a variant form tagged `morph:hira`).
+- **Per-language synset filtering**: only synsets referenced by at least one
+  sense in a given language are written to that language's LMF file (~700–2,000
+  synsets per language, down from ~2,900 previously).
 - **Build pipeline** modernised: `uv` for environment management, LMF XML
   validated with `python -m wn validate` at build time, release packaging with
   `make-release.sh`.
@@ -21,9 +24,9 @@
 ## Known issues
 
 - Example matching success rates vary by language: Myanmar (~45%), Arabic
-  (~11%), and Spanish (~68%) have lower rates due to a combination of
+  (~11%), and Spanish (~79%) have lower rates due to a combination of
   morphological complexity and shared example pools in the source data where
-  some examples do not contain the target word.  These examples are in the LMF 
+  some examples do not contain the target word.  These examples are in the LMF
   wordnets, but not the cygnet interface.
 - No sense relations or concept relations are included in this release; the
   original TUFS data does not provide them.

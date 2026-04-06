@@ -27,7 +27,7 @@
   "displayLanguage": "ja",
 
   "about": {
-    "intro": "<p>The TUFS Basic Vocabulary links the core vocabulary used for language teaching at <a href='https://www.tufs.ac.jp/' style='text-decoration:underline'>Tokyo University of Foreign Studies</a>  (TUFS) with the Open Multilingual Wordnet.</p><p>Source code and data are at  <a href='https://github.com/omwn/tufs' style='text-decoration:underline'>GitHub</a>.  The interface uses Cygnet (Maudslay  &amp; Bond, 2026)</p>",
+    "intro": "<p>The TUFS Basic Vocabulary links the core vocabulary used for language teaching at <a href='https://www.tufs.ac.jp/' style='text-decoration:underline'>Tokyo University of Foreign Studies</a>  (TUFS) with the <a href='https://en-word.net/' style='text-decoration:underline'>Open English WordNet (OEWN)</a> via the Collaborative Interlingual Index (ILI).</p><p>Source code and data are at  <a href='https://github.com/omwn/tufs' style='text-decoration:underline'>GitHub</a>.  The interface uses Cygnet (Maudslay  &amp; Bond, 2026)</p>",
     "citation": "If you use this resource, please cite Bond et al (2020).",
     "languageData": "The TUFS Basic Vocabulary covers 23 languages: Arabic, Assamese, German, English, Spanish, French, Indonesian, Japanese, Khmer, Korean, Lao, Mongolian, Malay, Burmese, Portuguese (Brazil), Portuguese, Russian, Thai, Filipino, Turkish, Urdu, Vietnamese, and Chinese. All data is released under <a href='https://creativecommons.org/licenses/by/4.0/' style='text-decoration:underline'>CC BY 4.0</a>."
   },
